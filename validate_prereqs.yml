@@ -1,0 +1,80 @@
+---
+## This playbook gathers data from the openshift nodes to validate ocp install prerequisites
+### This is tested on OCP 3.10
+- hosts: masters
+  become: yes
+  vars:
+    - master_min_cpu: 4
+    - master_min_ram: 16
+  tasks:
+  - name: Check if masters has minimum recommended number of vCPUs {{ master_min_cpu}}
+    shell: lscpu | grep -w "^CPU(s):" | awk '{print $2}'
+    register: cpu_out
+    failed_when: cpu_out.stdout|int < master_min_cpu
+    ignore_errors: true
+
+  - name: Check if masters has minimum recommended number of RAM {{ master_min_ram}}
+    shell: free -g | grep -w "Mem:" | awk '{print $2}'
+    register: ram_out
+    failed_when: ram_out.stdout|int < master_min_ram
+    ignore_errors: true
+ 
+- hosts: nodes
+  become: true
+  vars:
+    rhel_version: "7.4"
+  tasks:
+  - name: Check if nodes are running RHEL {{ rhel_version }}
+    command: cat /etc/redhat-release  
+    register: rhel_status
+    failed_when: "rhel_version not in rhel_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the NetworkManager 
+    command: systemctl is-active  NetworkManager  
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the ntpd 
+    command: systemctl is-active  ntpd 
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the firewalld 
+    command: systemctl is-active  firewalld 
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check if ipv4 forwarding is enabled 
+    command: sysctl -n net.ipv4.ip_forward
+    register: ipf_status
+    failed_when: "'0' in ipf_status.stdout"
+    ignore_errors: true
+
+  - name: gather fqdn
+    shell: grep search /etc/resolv.conf | awk '{print $2}'
+    register: fqdn_awk
+    delegate_to: localhost
+
+  - name: register variable for fqdn
+    set_fact:
+      fqdn: "{{ fqdn_awk.stdout }}"
+ 
+  - name: Check if hostname -f returns hostname with fqdn
+    command: hostname -f
+    register: host_name
+    failed_when: "fqdn not in host_name.stdout"
+
+  - name: Check if selinux is enforcing
+    command: getenforce
+    register: selinux_status
+    failed_when: "'Enforcing' not in selinux_status.stdout"
+
+  - name: Check if internal dns resolution works - resolve web console url {{ openshift_master_cluster_hostname }}
+    debug: msg="{{ lookup('dig', '{{ openshift_master_cluster_hostname }}.', 'qopt=+short')}}"
+
+  - name: Check if public dns resolution works - resolve web console url {{ openshift_master_cluster_public_hostname }}
+    debug: msg="{{ lookup('dig', '{{ openshift_master_cluster_public_hostname }}.', 'qopt=+short')}}"

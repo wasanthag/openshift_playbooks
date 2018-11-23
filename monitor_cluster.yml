@@ -1,0 +1,101 @@
+---
+## This playbook gathers data from the openshift cluster to check health of its components/services
+- hosts: masters
+  become: true
+  vars:
+    - web_conole_url: openshift.example.com
+    - apps_wildcard_url: ocpapps.example.com
+  tasks:
+  - block:
+      - name: Check if the nodes are in a state other than Ready
+        shell: oc get nodes | awk '{ print $2}'
+        register: node_status
+        failed_when: "'Ready' not in node_status.stdout"
+        ignore_errors: true
+  
+      - name: Check if the pods in default namespace are in a state other than Ready
+        shell: oc get pods -o custom-columns=POD:.metadata.name,STATUS:.status.phase -n default
+        register: pod_status
+        failed_when: "'Running' not in pod_status.stdout"
+        ignore_errors: true
+
+      - name: Check if the pods in kube-system namespace are in a state other than Ready
+        shell: oc get pods -o custom-columns=POD:.metadata.name,STATUS:.status.phase -n kube-system
+        register: pod_status2
+        failed_when: "'Running' not in pod_status2.stdout"
+        ignore_errors: true
+
+    when: ( inventory_hostname == groups.masters[0] )
+
+  - name: Check openshift master api is healthy
+    shell: source /etc/environment && curl -k https://{{ web_conole_url }}:443/healthz | grep ok
+    run_once: true
+    delegate_to: 127.0.0.1
+    register: api_status
+    failed_when: "'ok' not in api_status.stdout"
+
+  - name: Check openshift router is healthy
+    shell: source /etc/environment && curl -k -I https://{{ apps_wildcard_url }}:1936/healthz
+    run_once: true
+    delegate_to: 127.0.0.1
+    register: router_status
+    failed_when: "'ok' not in router_status.stdout"
+
+  - name: Check openshift kibana dashboard is healthy with 302 redirect
+    shell: source /etc/environment && curl -k -I https://kibana.{{ apps_wildcard_url }}
+    run_once: true
+    delegate_to: 127.0.0.1
+    register: kibana_status
+    failed_when: "'302' in kibana_status.stdout"
+
+- hosts: nodes
+  become: true
+  tasks:
+  - name: Check the status of the atomic-openshift-node.service 
+    command: systemctl is-active  atomic-openshift-node.service 
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the NetworkManager 
+    command: systemctl is-active  NetworkManager  
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the ntpd 
+    command: systemctl is-active  ntpd 
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the dnsmasq 
+    command: systemctl is-active  dnsmasq 
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the docker
+    command: systemctl is-active  docker
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check the status of the firewalld 
+    command: systemctl is-active  firewalld 
+    register: service_status
+    failed_when: "'inactive' in service_status.stdout"
+    ignore_errors: true
+
+  - name: Check docker storage usage is over 70%
+    shell: "echo $(echo \"$(docker info 2>/dev/null | awk '/Data Space Available/ {print $4}') / $(docker info 2>/dev/null | awk '/Data Space Total/ {print$4}')\" | bc -l) '>' 0.3| bc -l"
+    register: docker_data_status
+    failed_when: "'0' in docker_data_status.stdout"
+    ignore_errors: true
+ 
+  - name: Check docker Meta data storage usage is over 70%
+    shell: "echo $(echo \"$(docker info 2>/dev/null | awk '/Metadata Space Available/ {print $4}') / $(docker info 2>/dev/null | awk '/Metadata Space Total/ {print$4}')\" | bc -l) '>' 0.3| bc -l"
+    register: docker_mdata_status
+    failed_when: "'0' in docker_mdata_status.stdout"
+    ignore_errors: true
+ 
